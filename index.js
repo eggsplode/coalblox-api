@@ -5,17 +5,26 @@ const crypto = require("crypto");
 
 const app = express();
 
+const API_BASE_URL =
+    process.env.API_BASE_URL ||
+    "https://coalblox-api-yh3x.onrender.com";
+
+const GAME_SERVER_ADDRESS =
+    process.env.GAME_SERVER_ADDRESS ||
+    "";
+
+const GAME_SERVER_PORT =
+    Number(process.env.GAME_SERVER_PORT || 53640);
+
 const corsOptions = {
     origin: "https://eggsplode.github.io",
     credentials: true
 };
 
 app.use(cors(corsOptions));
-
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 
-// Password hashing
 function hashPassword(password) {
     return new Promise((resolve, reject) => {
         const salt = crypto.randomBytes(16).toString("hex");
@@ -122,7 +131,70 @@ async function findUser(username) {
     return result.rows[0];
 }
 
-// Login page test
+function getUserId(req) {
+    return Number(
+        req.query.userId ||
+        req.query.UserId ||
+        req.body?.userId ||
+        req.body?.UserId ||
+        0
+    );
+}
+
+function getUsername(req) {
+    return String(
+        req.query.username ||
+        req.query.UserName ||
+        req.body?.username ||
+        req.body?.UserName ||
+        "Player"
+    );
+}
+
+function getPlaceId(req) {
+    return Number(
+        req.query.placeId ||
+        req.query.PlaceId ||
+        req.body?.placeId ||
+        req.body?.PlaceId ||
+        0
+    );
+}
+
+function getGameId(req) {
+    return String(
+        req.query.gameId ||
+        req.query.GameId ||
+        req.body?.gameId ||
+        req.body?.GameId ||
+        crypto.randomUUID()
+    );
+}
+
+function getJoinServer() {
+    if (!GAME_SERVER_ADDRESS) {
+        return null;
+    }
+
+    return {
+        address: GAME_SERVER_ADDRESS,
+        port: GAME_SERVER_PORT
+    };
+}
+
+function createClientTicket(userId, username, placeId, gameId, sessionId) {
+    return Buffer.from(
+        JSON.stringify({
+            userId,
+            username,
+            placeId,
+            gameId,
+            sessionId,
+            issuedAt: Date.now()
+        })
+    ).toString("base64");
+}
+
 app.get("/login/v1", (req, res) => {
     res.json({
         success: true,
@@ -130,11 +202,9 @@ app.get("/login/v1", (req, res) => {
     });
 });
 
-// Login
 app.post("/login/v1", async (req, res) => {
     const { username, password } = req.body || {};
 
-    // Do NOT log the password.
     console.log("LOGIN:", username);
 
     try {
@@ -156,15 +226,12 @@ app.post("/login/v1", async (req, res) => {
 
         let validPassword = false;
 
-        // New hashed passwords
         if (user.password && user.password.includes(":")) {
             validPassword = await verifyPassword(
                 password,
                 user.password
             );
         } else {
-            // Support old plaintext accounts once,
-            // then immediately convert them to a hash.
             validPassword = user.password === password;
 
             if (validPassword) {
@@ -198,6 +265,8 @@ app.post("/login/v1", async (req, res) => {
 
         return res.json({
             success: true,
+            userId: user.id,
+            username: user.username,
             redirect: "https://eggsplode.github.io/games"
         });
 
@@ -211,7 +280,6 @@ app.post("/login/v1", async (req, res) => {
     }
 });
 
-// Session check
 app.get("/session", async (req, res) => {
     try {
         const token = getSessionToken(req);
@@ -253,7 +321,6 @@ app.get("/session", async (req, res) => {
     }
 });
 
-// Logout
 app.post("/logout", async (req, res) => {
     try {
         const token = getSessionToken(req);
@@ -289,7 +356,6 @@ app.post("/logout", async (req, res) => {
     }
 });
 
-// dbtest
 app.get("/dbtest", async (req, res) => {
     try {
         const result = await pool.query("SELECT NOW()");
@@ -309,11 +375,9 @@ app.get("/dbtest", async (req, res) => {
     }
 });
 
-// Signup
 app.post("/signup/v1", async (req, res) => {
     const { username, password } = req.body || {};
 
-    // Do NOT log the password.
     console.log("Signup:", username);
 
     try {
@@ -345,7 +409,6 @@ app.post("/signup/v1", async (req, res) => {
 
         const user = result.rows[0];
 
-        // Automatically log the new user in.
         const sessionToken = await createSession(user.id);
 
         res.cookie("session", sessionToken, {
@@ -373,7 +436,6 @@ app.post("/signup/v1", async (req, res) => {
     }
 });
 
-// Captcha
 app.post("/captcha/validate/signup", (req, res) => {
     res.json({
         success: true,
@@ -390,7 +452,7 @@ app.post("/captcha/validate/login", (req, res) => {
 
 app.get("/xboxlive/get-roblox-userInfo", async (req, res) => {
     try {
-        const userId = req.query.userId;
+        const userId = getUserId(req);
 
         if (!userId) {
             return res.status(400).json({
@@ -416,6 +478,7 @@ app.get("/xboxlive/get-roblox-userInfo", async (req, res) => {
             username: user.username,
             displayName: user.username
         });
+
     } catch (err) {
         console.error(err);
 
@@ -430,43 +493,64 @@ app.get("/xboxlive/get-inventory", (req, res) => {
 });
 
 app.post("/xboxlive/consume-all", (req, res) => {
-    res.json({ success: true });
+    res.json({
+        success: true
+    });
 });
 
 app.get("/xbox/translate", (req, res) => {
-    res.json({ userId: null });
+    res.json({
+        userId: null
+    });
 });
 
 app.post("/xboxlive/connect", (req, res) => {
-    res.json({ success: true });
+    res.json({
+        success: true
+    });
 });
-
 
 app.get("/xbox/get-party-info", (req, res) => {
     res.json({});
 });
 
 app.post("/xboxlive/link-existing-user", (req, res) => {
-    res.json({ success: true });
+    res.json({
+        success: true
+    });
 });
 
 app.post("/xboxlive/disconnect", (req, res) => {
-    res.json({ success: true });
+    res.json({
+        success: true
+    });
 });
 
 app.post("/xboxlive/set-roblox-username-password", (req, res) => {
-    res.json({ success: true });
+    res.json({
+        success: true
+    });
 });
 
 app.get("/xboxlive/has-linked-account", (req, res) => {
-    res.json({ linked: false });
+    res.json({
+        linked: false
+    });
 });
 
 app.get("/xboxlive/has-set-username-password", (req, res) => {
-    res.json({ set: false });
+    res.json({
+        set: false
+    });
 });
 
-// Username checker
+app.post("/device/initialize", (req, res) => {
+    res.json({
+        success: true,
+        message: "Device initialized"
+    });
+});
+
 app.get("/UserCheck/checkifinvalidusernameforsignup", (req, res) => {
     const username = req.query.username;
 
@@ -479,7 +563,238 @@ app.get("/UserCheck/checkifinvalidusernameforsignup", (req, res) => {
     });
 });
 
-// Debug routes
+app.get("/Game/Join.ashx", (req, res) => {
+    const userId = getUserId(req);
+    const username = getUsername(req);
+    const placeId = getPlaceId(req);
+    const gameId = getGameId(req);
+    const sessionId = crypto.randomUUID();
+
+    const server = getJoinServer();
+
+    if (!server) {
+        return res.status(503).type("text/plain").send(
+            JSON.stringify({
+                success: false,
+                error: "No game server configured",
+                message: "Set GAME_SERVER_ADDRESS and GAME_SERVER_PORT on the API."
+            })
+        );
+    }
+
+    const clientTicket = createClientTicket(
+        userId,
+        username,
+        placeId,
+        gameId,
+        sessionId
+    );
+
+    res.type("text/plain").send(
+        JSON.stringify({
+            ClientPort: 0,
+            MachineAddress: server.address,
+            ServerPort: server.port,
+            PingUrl: "",
+            PingInterval: 120,
+            UserName: username,
+            SeleniumTestMode: false,
+            UserId: userId,
+            SuperSafeChat: true,
+            CharacterAppearance:
+                API_BASE_URL +
+                "/Asset/CharacterFetch.ashx?userId=" +
+                encodeURIComponent(userId) +
+                "&placeId=" +
+                encodeURIComponent(placeId),
+            ClientTicket: clientTicket,
+            GameId: gameId,
+            PlaceId: placeId,
+            MeasurementUrl: "",
+            WaitingForCharacterGuid: crypto.randomUUID(),
+            BaseUrl: API_BASE_URL + "/",
+            ChatStyle: "Classic",
+            VendorId: 0,
+            ScreenShotInfo: "",
+            VideoInfo: "",
+            CreatorId: 0,
+            CreatorTypeEnum: "User",
+            MembershipType: "None",
+            AccountAge: 0,
+            CookieStoreFirstTimePlayKey: "rbx_evt_ftp",
+            CookieStoreFiveMinutePlayKey: "rbx_evt_fmp",
+            CookieStoreEnabled: true,
+            IsRobloxPlace: false,
+            GenerateTeleportJoin: false,
+            IsUnknownOrUnder13: true,
+            SessionId: sessionId,
+            DataCenterId: 0,
+            UniverseId: 0,
+            BrowserTrackerId: 0,
+            UsePortraitMode: false,
+            FollowUserId: 0
+        })
+    );
+});
+
+app.get("/game/join.ashx", (req, res) => {
+    const query = new URLSearchParams(req.query).toString();
+
+    res.redirect(
+        "/Game/Join.ashx" +
+        (query ? "?" + query : "")
+    );
+});
+
+app.get("/Game/PlaceLauncher.ashx", (req, res) => {
+    const placeId = getPlaceId(req);
+    const username = getUsername(req);
+    const userId = getUserId(req);
+    const gameId = getGameId(req);
+
+    const server = getJoinServer();
+
+    if (!server) {
+        return res.status(503).json({
+            status: 0,
+            jobId: gameId,
+            joinScriptUrl: null,
+            message: "No game server configured"
+        });
+    }
+
+    const joinScriptUrl =
+        API_BASE_URL +
+        "/Game/Join.ashx?" +
+        new URLSearchParams({
+            placeId: String(placeId),
+            username: String(username),
+            userId: String(userId),
+            gameId: String(gameId)
+        }).toString();
+
+    res.json({
+        status: 2,
+        jobId: gameId,
+        joinScriptUrl
+    });
+});
+
+app.get("/game/placelauncher.ashx", (req, res) => {
+    const placeId = getPlaceId(req);
+    const username = getUsername(req);
+    const userId = getUserId(req);
+    const gameId = getGameId(req);
+
+    const server = getJoinServer();
+
+    if (!server) {
+        return res.status(503).json({
+            status: 0,
+            jobId: gameId,
+            joinScriptUrl: null,
+            message: "No game server configured"
+        });
+    }
+
+    const joinScriptUrl =
+        API_BASE_URL +
+        "/Game/Join.ashx?" +
+        new URLSearchParams({
+            placeId: String(placeId),
+            username: String(username),
+            userId: String(userId),
+            gameId: String(gameId)
+        }).toString();
+
+    res.json({
+        status: 2,
+        jobId: gameId,
+        joinScriptUrl
+    });
+});
+
+app.get("/Game/JoinRate.ashx", (req, res) => {
+    res.status(200).send("");
+});
+
+app.get("/game/joinrate.ashx", (req, res) => {
+    res.status(200).send("");
+});
+
+app.get("/Asset/CharacterFetch.ashx", async (req, res) => {
+    try {
+        const userId = Number(req.query.userId || 0);
+
+        if (!userId) {
+            return res.type("text/plain").send("");
+        }
+
+        const result = await pool.query(
+            "SELECT id, username FROM users WHERE id = $1",
+            [userId]
+        );
+
+        if (result.rows.length === 0) {
+            return res.type("text/plain").send("");
+        }
+
+        const user = result.rows[0];
+
+        res.type("text/plain").send(
+            JSON.stringify({
+                userId: user.id,
+                username: user.username,
+                displayName: user.username
+            })
+        );
+
+    } catch (err) {
+        console.error(err);
+        res.type("text/plain").send("");
+    }
+});
+
+app.get("/asset/characterfetch.ashx", async (req, res) => {
+    try {
+        const userId = Number(req.query.userId || 0);
+
+        if (!userId) {
+            return res.type("text/plain").send("");
+        }
+
+        const result = await pool.query(
+            "SELECT id, username FROM users WHERE id = $1",
+            [userId]
+        );
+
+        if (result.rows.length === 0) {
+            return res.type("text/plain").send("");
+        }
+
+        const user = result.rows[0];
+
+        res.type("text/plain").send(
+            JSON.stringify({
+                userId: user.id,
+                username: user.username,
+                displayName: user.username
+            })
+        );
+
+    } catch (err) {
+        console.error(err);
+        res.type("text/plain").send("");
+    }
+});
+
+app.get("/client-status", (req, res) => {
+    res.json({
+        success: true,
+        status: "ok"
+    });
+});
+
 app.get("/routes", (req, res) => {
     res.json({
         routes: [
@@ -490,6 +805,7 @@ app.get("/routes", (req, res) => {
             "POST /signup/v1",
             "POST /logout",
             "GET /session",
+            "GET /dbtest",
             "POST /captcha/validate/login",
             "POST /captcha/validate/signup",
             "GET /UserCheck/checkifinvalidusernameforsignup",
@@ -503,143 +819,30 @@ app.get("/routes", (req, res) => {
             "POST /xboxlive/disconnect",
             "POST /xboxlive/set-roblox-username-password",
             "GET /xboxlive/has-linked-account",
-            "GET /xboxlive/has-set-username-password"
+            "GET /xboxlive/has-set-username-password",
+            "GET /Game/Join.ashx",
+            "GET /game/join.ashx",
+            "GET /Game/PlaceLauncher.ashx",
+            "GET /game/placelauncher.ashx",
+            "GET /Game/JoinRate.ashx",
+            "GET /game/joinrate.ashx",
+            "GET /Asset/CharacterFetch.ashx",
+            "GET /asset/characterfetch.ashx",
+            "GET /client-status"
         ]
     });
 });
 
-// API homepage
 app.get("/", (req, res) => {
     res.json({
         success: true,
         message: "Eggsplode! API is running",
         version: "1.0",
+        gameServerConfigured: Boolean(GAME_SERVER_ADDRESS),
         time: new Date()
     });
 });
 
-// Device initialize
-app.post("/device/initialize", (req, res) => {
-    res.json({
-        success: true,
-        message: "Device initialized"
-    });
-});
-
-app.get("/Game/Join.ashx", (req, res) => {
-    const userId = Number(req.query.userId || req.query.UserId || 0);
-    const username = req.query.username || req.query.UserName || "Player";
-    const placeId = Number(req.query.placeId || req.query.PlaceId || 0);
-    const machineAddress = process.env.GAME_SERVER_ADDRESS || "127.0.0.1";
-    const serverPort = Number(process.env.GAME_SERVER_PORT || 53640);
-    const gameId = req.query.gameId || crypto.randomUUID();
-    const sessionId = crypto.randomUUID();
-
-    res.type("text/plain").send(JSON.stringify({
-        ClientPort: 0,
-        MachineAddress: machineAddress,
-        ServerPort: serverPort,
-        PingUrl: "",
-        PingInterval: 120,
-        UserName: username,
-        SeleniumTestMode: false,
-        UserId: userId,
-        SuperSafeChat: true,
-        CharacterAppearance: "https://coalblox-api-yh3x.onrender.com/Asset/CharacterFetch.ashx?userId=" + userId + "&placeId=" + placeId,
-        ClientTicket: crypto.randomBytes(32).toString("base64"),
-        GameId: gameId,
-        PlaceId: placeId,
-        MeasurementUrl: "",
-        WaitingForCharacterGuid: crypto.randomUUID(),
-        BaseUrl: "https://coalblox-api-yh3x.onrender.com/",
-        ChatStyle: "Classic",
-        VendorId: 0,
-        ScreenShotInfo: "",
-        VideoInfo: "",
-        CreatorId: 0,
-        CreatorTypeEnum: "User",
-        MembershipType: "None",
-        AccountAge: 0,
-        CookieStoreFirstTimePlayKey: "rbx_evt_ftp",
-        CookieStoreFiveMinutePlayKey: "rbx_evt_fmp",
-        CookieStoreEnabled: true,
-        IsRobloxPlace: false,
-        GenerateTeleportJoin: false,
-        IsUnknownOrUnder13: true,
-        SessionId: sessionId,
-        DataCenterId: 0,
-        UniverseId: 0,
-        BrowserTrackerId: 0,
-        UsePortraitMode: false,
-        FollowUserId: 0
-    }));
-});
-
-app.get("/game/join.ashx", (req, res) => {
-    const query = new URLSearchParams(req.query).toString();
-    res.redirect("/Game/Join.ashx" + (query ? "?" + query : ""));
-});
-
-app.get("/Game/PlaceLauncher.ashx", (req, res) => {
-    const placeId = req.query.placeId || req.query.PlaceId || 0;
-    const username = req.query.username || req.query.UserName || "Player";
-    const userId = req.query.userId || req.query.UserId || 0;
-
-    res.json({
-        status: 2,
-        jobId: crypto.randomUUID(),
-        joinScriptUrl:
-            "https://coalblox-api-yh3x.onrender.com/Game/Join.ashx?" +
-            new URLSearchParams({
-                placeId: String(placeId),
-                username: String(username),
-                userId: String(userId)
-            }).toString()
-    });
-});
-
-app.get("/game/placelauncher.ashx", (req, res) => {
-    const placeId = req.query.placeId || req.query.PlaceId || 0;
-    const username = req.query.username || req.query.UserName || "Player";
-    const userId = req.query.userId || req.query.UserId || 0;
-
-    res.json({
-        status: 2,
-        jobId: crypto.randomUUID(),
-        joinScriptUrl:
-            "https://coalblox-api-yh3x.onrender.com/Game/Join.ashx?" +
-            new URLSearchParams({
-                placeId: String(placeId),
-                username: String(username),
-                userId: String(userId)
-            }).toString()
-    });
-});
-
-app.get("/Game/JoinRate.ashx", (req, res) => {
-    res.status(200).send("");
-});
-
-app.get("/game/joinrate.ashx", (req, res) => {
-    res.status(200).send("");
-});
-
-app.get("/Asset/CharacterFetch.ashx", (req, res) => {
-    res.type("text/plain").send("");
-});
-
-app.get("/asset/characterfetch.ashx", (req, res) => {
-    res.type("text/plain").send("");
-});
-
-app.get("/client-status", (req, res) => {
-    res.json({
-        success: true,
-        status: "ok"
-    });
-});
-
-// 404 (MUST STAY LAST)
 app.use((req, res) => {
     console.log("404:", req.method, req.url);
 
